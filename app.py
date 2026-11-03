@@ -84,10 +84,6 @@ HTML_PAGE = """
 </html>
 """
 
-@app.route("/")
-def home():
-    return render_template_string(HTML_PAGE)
-
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -95,15 +91,27 @@ def chat():
         return jsonify({"reply": "❌ Galat Password! Access Denied."})
     if not client:
         return jsonify({"reply": "⚠️ API Key set nahi hai!"})
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=f"Tum mera personal AI assistant aur server manager ho. Hinglish mein chota aur smart jawab do: {data.get('message')}"
-        )
-        return jsonify({"reply": response.text})
-    except Exception as e:
-        return jsonify({"reply": f"Error: {str(e)}"})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    
+    prompt = f"Tum mera personal AI assistant aur server manager ho. Hinglish mein chota aur smart jawab do: {data.get('message')}"
+    
+    # Agar main model busy (503) ho, toh turant lite/doosre model par switch karega
+    models_to_try = [
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash"
+    ]
+    
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            return jsonify({"reply": response.text})
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    return jsonify({"reply": "⏳ Server par abhi traffic zyada hai, 5 second baad dubara Send dabayein!"})
+                
