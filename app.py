@@ -97,7 +97,7 @@ def chat():
         return jsonify({"reply": "⚠️ API Key set nahi hai!"})
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=f"Tum mera personal AI assistant aur server manager ho. Hinglish mein chota aur smart jawab do: {data.get('message')}"
         )
         return jsonify({"reply": response.text})
