@@ -1,4 +1,2 @@
 flask
-google-genai
 gunicorn
-yt-dlp
