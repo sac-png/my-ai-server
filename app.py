@@ -1,12 +1,12 @@
 import os
+import time
 from flask import Flask, render_template_string, request, jsonify
 from google import genai
 
 app = Flask(__name__)
 
-# Security aur API Key (Render ki settings se aayengi)
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "12345") # Default password
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "12345")
 
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
@@ -60,7 +60,6 @@ HTML_PAGE = """
             chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${data.reply}</div>`;
             chatBox.scrollTop = chatBox.scrollHeight;
 
-            // Voice Output (AI bolega)
             if ('speechSynthesis' in window) {
                 let speech = new SpeechSynthesisUtterance(data.reply);
                 speech.lang = 'hi-IN';
@@ -84,6 +83,10 @@ HTML_PAGE = """
 </html>
 """
 
+@app.route("/")
+def home():
+    return render_template_string(HTML_PAGE)
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -94,24 +97,32 @@ def chat():
     
     prompt = f"Tum mera personal AI assistant aur server manager ho. Hinglish mein chota aur smart jawab do: {data.get('message')}"
     
-    # Agar main model busy (503) ho, toh turant lite/doosre model par switch karega
     models_to_try = [
+        "gemini-3.8-flash-lite",
+        "gemini-3.8-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash"
+        "gemini-2.0-flash"
     ]
     
+    last_error = ""
     for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt
-            )
-            return jsonify({"reply": response.text})
-        except Exception as e:
-            last_error = str(e)
-            continue
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                return jsonify({"reply": response.text})
+            except Exception as e:
+                last_error = str(e)
+                if "503" in last_error:
+                    time.sleep(1)
+                    continue
+                break
             
-    return jsonify({"reply": "⏳ Server par abhi traffic zyada hai, 5 second baad dubara Send dabayein!"})
+    return jsonify({"reply": f"⏳ Server abhi busy hai, 5 second baad try karein. ({last_error})"})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
                 
