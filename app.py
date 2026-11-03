@@ -1,7 +1,5 @@
 import os
 import json
-import urllib.request
-import urllib.parse
 import subprocess
 from flask import Flask, render_template_string, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -40,14 +38,14 @@ HTML_PAGE = """
         .tab-btn.active { background: #0284c7; color: white; }
         .section { display: none; margin-top: 15px; }
         .section.active { display: block; }
-        input, textarea, button { width: 100%; padding: 11px; margin-top: 8px; border-radius: 8px; border: none; box-sizing: border-box; font-size: 14px; }
-        input, textarea { background: #334155; color: white; border: 1px solid #475569; }
+        input, textarea, button, select { width: 100%; padding: 11px; margin-top: 8px; border-radius: 8px; border: none; box-sizing: border-box; font-size: 14px; }
+        input, textarea, select { background: #334155; color: white; border: 1px solid #475569; }
         button.action { background: #0284c7; color: white; font-weight: bold; cursor: pointer; }
         button.mic { background: #e11d48; color: white; font-weight: bold; }
         button.del { background: #dc2626; width: auto; padding: 5px 10px; font-size: 12px; margin: 0; color: white; border-radius: 4px; cursor: pointer; }
-        #chatBox, .list-box { height: 260px; overflow-y: auto; background: #0f172a; padding: 12px; border-radius: 8px; margin-top: 10px; border: 1px solid #334155; font-size: 14px; }
+        #chatBox, .list-box { height: 250px; overflow-y: auto; background: #0f172a; padding: 12px; border-radius: 8px; margin-top: 10px; border: 1px solid #334155; font-size: 14px; }
         .user { color: #38bdf8; margin: 8px 0; text-align: right; }
-        .ai { color: #4ade80; margin: 8px 0; text-align: left; }
+        .ai { color: #4ade80; margin: 8px 0; text-align: left; white-space: pre-wrap; }
         .item { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 8px 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #334155; word-break: break-all; }
         a { color: #38bdf8; text-decoration: none; }
         #calcScreen { font-size: 20px; font-weight: bold; text-align: right; background: #0f172a; border-radius: 8px; padding: 12px; border: 1px solid #334155; margin-bottom: 8px; min-height: 50px; color: #4ade80; }
@@ -73,7 +71,11 @@ HTML_PAGE = """
 
         <!-- 1. AI Assistant Tab -->
         <div id="aiTab" class="section active">
-            <div id="chatBox"><div class="ai"><b>AI:</b> Superfast AI Ready! (Bina API Key ke bhi chalega). Password daal kar puchein!</div></div>
+            <select id="aiMode">
+                <option value="free">⚡ Mode 1: Direct Superfast Free AI (No API Key / No Busy Error)</option>
+                <option value="gemini">🧠 Mode 2: Google Gemini API (Server Key)</option>
+            </select>
+            <div id="chatBox"><div class="ai"><b>AI:</b> Non-Stop AI Ready! Upar Password daal kar kuch bhi puchein.</div></div>
             <textarea id="msg" rows="2" placeholder="Yahan likhein ya Mic dabayein..."></textarea>
             <button class="action" id="sendBtn" onclick="sendMsg()">🚀 Send Message</button>
             <button class="mic" onclick="startVoice()">🎤 Bolkar Puchein (Voice)</button>
@@ -145,34 +147,79 @@ HTML_PAGE = """
             btn.classList.add('active');
         }
 
+        function speakText(text) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                let s = new SpeechSynthesisUtterance(text);
+                s.lang = 'hi-IN';
+                window.speechSynthesis.speak(s);
+            }
+        }
+
+        async function callDirectFreeAI(msg) {
+            let prompt = "Tum Sachin ke smart personal AI assistant ho. Hinglish mein chota aur clear jawab do: " + msg;
+            let res = await fetch("https://text.pollinations.ai/" + encodeURIComponent(prompt));
+            return await res.text();
+        }
+
         async function sendMsg() {
             let msgInput = document.getElementById('msg');
             let msg = msgInput.value.trim();
             let chatBox = document.getElementById('chatBox');
             let btn = document.getElementById('sendBtn');
+            let mode = document.getElementById('aiMode').value;
             if(!msg) return;
 
             chatBox.innerHTML += `<div class='user'><b>You:</b> ${msg}</div>`;
             msgInput.value = '';
-            btn.innerText = "⏳ Soch raha hai...";
+            btn.innerText = "⏳ Jawab aa raha hai...";
             chatBox.scrollTop = chatBox.scrollHeight;
 
             try {
-                let res = await fetch('/chat', {
+                // Pehle password check karein
+                let authRes = await fetch('/check_pass', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({password: getPass(), message: msg})
+                    body: JSON.stringify({password: getPass()})
                 });
-                let data = await res.json();
-                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${data.reply}</div>`;
-                if ('speechSynthesis' in window) {
-                    window.speechSynthesis.cancel();
-                    let s = new SpeechSynthesisUtterance(data.reply);
-                    s.lang = 'hi-IN';
-                    window.speechSynthesis.speak(s);
+                let authData = await authRes.json();
+                if (!authData.ok) {
+                    chatBox.innerHTML += `<div class='ai'><b>AI:</b> ❌ Galat Password! Upar sahi Server Password dalein.</div>`;
+                    btn.innerText = "🚀 Send Message";
+                    return;
                 }
+
+                let replyText = "";
+                if (mode === "free") {
+                    // Direct Browser se Superfast AI (Kabhi busy ya timeout nahi hoga)
+                    replyText = await callDirectFreeAI(msg);
+                } else {
+                    // Server Gemini Mode
+                    let res = await fetch('/chat', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({password: getPass(), message: msg})
+                    });
+                    let data = await res.json();
+                    if (data.error_fallback) {
+                        // Agar Gemini busy (503) hai toh turant Direct Free AI se jawab laao
+                        replyText = await callDirectFreeAI(msg);
+                    } else {
+                        replyText = data.reply;
+                    }
+                }
+
+                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${replyText}</div>`;
+                speakText(replyText);
             } catch (err) {
-                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ⚠️ Network error, dubara Send dabayein.</div>`;
+                // Agar server so raha ho tab bhi Direct AI kaam karega
+                try {
+                    let backupReply = await callDirectFreeAI(msg);
+                    chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${backupReply}</div>`;
+                    speakText(backupReply);
+                } catch (e2) {
+                    chatBox.innerHTML += `<div class='ai'><b>AI:</b> ⚠️ Internet slow hai, dubara Send dabayein.</div>`;
+                }
             }
             btn.innerText = "🚀 Send Message";
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -328,39 +375,27 @@ def check_auth(pw):
 def home():
     return render_template_string(HTML_PAGE)
 
+@app.route("/check_pass", methods=["POST"])
+def check_pass():
+    data = request.json or {}
+    return jsonify({"ok": check_auth(data.get("password", ""))})
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json or {}
     if not check_auth(data.get("password", "")):
-        return jsonify({"reply": "❌ Galat Password! Upar sahi Server Password dalein."})
+        return jsonify({"reply": "❌ Galat Password!"})
     
-    user_msg = data.get("message", "")
-    prompt = f"Tum Sachin ke personal server assistant ho. Hinglish mein chota aur smart jawab do: {user_msg}"
+    prompt = f"Tum Sachin ke smart personal server assistant ho. Hinglish mein chota aur clear jawab do: {data.get('message', '')}"
 
-    # 1. Pehle Bina API Key wala Superfast Free AI try karega (100% Working & Fast)
-    try:
-        encoded = urllib.parse.quote(prompt)
-        req = urllib.request.Request(
-            f"https://text.pollinations.ai/{encoded}",
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=8) as response:
-            reply_text = response.read().decode("utf-8").strip()
-            if reply_text:
-                return jsonify({"reply": reply_text})
-    except Exception:
-        pass
-
-    # 2. Backup: Agar Gemini API Key hai toh latest Gemini 3.8 model chalayega
     if client:
-        for m in ["gemini-3.8-flash", "gemini-2.5-flash"]:
-            try:
-                res = client.models.generate_content(model=m, contents=prompt)
-                return jsonify({"reply": res.text})
-            except Exception as e:
-                continue
+        try:
+            res = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+            return jsonify({"reply": res.text})
+        except Exception:
+            return jsonify({"error_fallback": True})
 
-    return jsonify({"reply": "⚠️ Server busy hai, ek baar phir Send dabayein."})
+    return jsonify({"error_fallback": True})
 
 @app.route("/files")
 def list_files():
@@ -380,99 +415,4 @@ def upload_file():
 @app.route("/download/<filename>")
 def download_file(filename):
     if not check_auth(request.args.get("password", "")):
-        return "Unauthorized", 403
-    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
-
-@app.route("/delete_file", methods=["POST"])
-def delete_file():
-    data = request.json or {}
-    if not check_auth(data.get("password", "")):
-        return jsonify({"error": "Unauthorized"}), 403
-    path = os.path.join(UPLOAD_FOLDER, secure_filename(data.get("filename", "")))
-    if os.path.exists(path):
-        os.remove(path)
-    return jsonify({"status": "ok"})
-
-@app.route("/notes", methods=["GET", "POST"])
-def handle_notes():
-    if request.method == "GET":
-        if not check_auth(request.args.get("password", "")):
-            return jsonify({"error": "❌ Password dalein!"})
-        with open(NOTES_FILE, "r") as f:
-            return jsonify({"notes": json.load(f)})
-    else:
-        data = request.json or {}
-        if not check_auth(data.get("password", "")):
-            return jsonify({"error": "Unauthorized"}), 403
-        with open(NOTES_FILE, "r") as f:
-            notes = json.load(f)
-        notes.append(data.get("note"))
-        with open(NOTES_FILE, "w") as f:
-            json.dump(notes, f)
-        return jsonify({"status": "ok"})
-
-@app.route("/delete_note", methods=["POST"])
-def delete_note():
-    data = request.json or {}
-    if not check_auth(data.get("password", "")):
-        return jsonify({"error": "Unauthorized"}), 403
-    with open(NOTES_FILE, "r") as f:
-        notes = json.load(f)
-    idx = data.get("index", -1)
-    if 0 <= idx < len(notes):
-        notes.pop(idx)
-    with open(NOTES_FILE, "w") as f:
-        json.dump(notes, f)
-    return jsonify({"status": "ok"})
-
-@app.route("/download_v", methods=["POST"])
-def download_video():
-    data = request.json or {}
-    if not check_auth(data.get("password", "")):
-        return jsonify({"error": "Unauthorized"}), 403
-    url = data.get("url")
-    try:
-        cmd = f"yt-dlp -P {UPLOAD_FOLDER} -o '%(title)s.%(ext)s' --max-filesize 50M '{url}'"
-        subprocess.Popen(cmd, shell=True)
-        return jsonify({"status": "📥 Download chalu ho gaya! Thodi der mein Files tab check karein."})
-    except Exception as e:
-        return jsonify({"error": f"Error: {str(e)}"})
-
-@app.route("/hosted_list")
-def hosted_list():
-    if not check_auth(request.args.get("password", "")):
-        return jsonify({"error": "❌ Password dalein!"})
-    return jsonify({"pages": [f for f in os.listdir(WEB_HOST_FOLDER) if f.endswith('.html')]})
-
-@app.route("/save_web", methods=["POST"])
-def save_web():
-    data = request.json or {}
-    if not check_auth(data.get("password", "")):
-        return jsonify({"error": "Unauthorized"}), 403
-    filename = secure_filename(data.get("filename", ""))
-    if not filename.endswith('.html'):
-        filename += '.html'
-    code = data.get("code", "")
-    with open(os.path.join(WEB_HOST_FOLDER, filename), "w") as f:
-        f.write(code)
-    return jsonify({"status": "ok"})
-
-@app.route("/web/<filename>")
-def view_hosted_page(filename):
-    if not check_auth(request.args.get("password", "")):
-        return "Unauthorized", 403
-    return send_from_directory(WEB_HOST_FOLDER, filename)
-
-@app.route("/delete_page", methods=["POST"])
-def delete_page():
-    data = request.json or {}
-    if not check_auth(data.get("password", "")):
-        return jsonify({"error": "Unauthorized"}), 403
-    path = os.path.join(WEB_HOST_FOLDER, secure_filename(data.get("filename", "")))
-    if os.path.exists(path):
-        os.remove(path)
-    return jsonify({"status": "ok"})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+        return "Unautho
