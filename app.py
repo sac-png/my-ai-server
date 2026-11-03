@@ -1,9 +1,9 @@
 import os
 import json
-import subprocess
+import urllib.request
+import urllib.parse
 from flask import Flask, render_template_string, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from google import genai
 
 app = Flask(__name__)
 
@@ -20,8 +20,6 @@ os.makedirs(WEB_HOST_FOLDER, exist_ok=True)
 if not os.path.exists(NOTES_FILE):
     with open(NOTES_FILE, "w") as f:
         json.dump([], f)
-
-client = genai.Client(api_key=API_KEY) if API_KEY else None
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -64,45 +62,36 @@ HTML_PAGE = """
             <button class="tab-btn active" onclick="openTab('aiTab', this)">🤖 Fast AI</button>
             <button class="tab-btn" onclick="openTab('fileTab', this); loadFiles();">📁 Files</button>
             <button class="tab-btn" onclick="openTab('noteTab', this); loadNotes();">📝 Notes</button>
-            <button class="tab-btn" onclick="openTab('dlTab', this)">📥 Downloader</button>
+            <button class="tab-btn" onclick="openTab('dlTab', this)">📥 URL Saver</button>
             <button class="tab-btn" onclick="openTab('hostTab', this); loadHostedPages();">🌐 Web Host</button>
             <button class="tab-btn" onclick="openTab('calcTab', this)">🧮 Calculator</button>
         </div>
 
-        <!-- 1. AI Assistant Tab -->
         <div id="aiTab" class="section active">
-            <select id="aiMode">
-                <option value="free">⚡ Mode 1: Direct Superfast Free AI (No API Key / No Busy Error)</option>
-                <option value="gemini">🧠 Mode 2: Google Gemini API (Server Key)</option>
-            </select>
-            <div id="chatBox"><div class="ai"><b>AI:</b> Non-Stop AI Ready! Upar Password daal kar kuch bhi puchein.</div></div>
+            <div id="chatBox"><div class="ai"><b>AI:</b> Superfast AI Ready! Upar Password daal kar kuch bhi puchein.</div></div>
             <textarea id="msg" rows="2" placeholder="Yahan likhein ya Mic dabayein..."></textarea>
             <button class="action" id="sendBtn" onclick="sendMsg()">🚀 Send Message</button>
             <button class="mic" onclick="startVoice()">🎤 Bolkar Puchein (Voice)</button>
         </div>
 
-        <!-- 2. File Cloud Tab -->
         <div id="fileTab" class="section">
             <input type="file" id="fileInput">
             <button class="action" onclick="uploadFile()">⬆️ Server Par File Upload Karein</button>
             <div class="list-box" id="fileList">Password daal kar dekhein...</div>
         </div>
 
-        <!-- 3. Notes Tab -->
         <div id="noteTab" class="section">
             <textarea id="noteInput" rows="2" placeholder="Note ya Link save karein..."></textarea>
             <button class="action" onclick="saveNote()">💾 Save Note</button>
             <div class="list-box" id="noteList">Password daal kar dekhein...</div>
         </div>
 
-        <!-- 4. Downloader Tab -->
         <div id="dlTab" class="section">
-            <input type="text" id="videoUrl" placeholder="Video Link paste karein">
-            <button class="action" onclick="downloadVideo()">📥 Video Server Pe Save Karein</button>
+            <input type="text" id="videoUrl" placeholder="Direct File/Media Link paste karein">
+            <button class="action" onclick="downloadUrl()">📥 Link Se Server Pe Save Karein</button>
             <div class="list-box" id="downloadStatus" style="height: 100px;">Ready...</div>
         </div>
 
-        <!-- 5. Mini Web Hosting Tab -->
         <div id="hostTab" class="section">
             <input type="text" id="webFilename" placeholder="Page Name (e.g. index.html)">
             <textarea id="webCode" rows="4" placeholder="HTML code paste karein..."></textarea>
@@ -110,7 +99,6 @@ HTML_PAGE = """
             <div class="list-box" id="hostedList">Ready...</div>
         </div>
 
-        <!-- 6. Calculator Tab -->
         <div id="calcTab" class="section">
             <div id="calcScreen">0</div>
             <div class="calc-grid">
@@ -156,18 +144,11 @@ HTML_PAGE = """
             }
         }
 
-        async function callDirectFreeAI(msg) {
-            let prompt = "Tum Sachin ke smart personal AI assistant ho. Hinglish mein chota aur clear jawab do: " + msg;
-            let res = await fetch("https://text.pollinations.ai/" + encodeURIComponent(prompt));
-            return await res.text();
-        }
-
         async function sendMsg() {
             let msgInput = document.getElementById('msg');
             let msg = msgInput.value.trim();
             let chatBox = document.getElementById('chatBox');
             let btn = document.getElementById('sendBtn');
-            let mode = document.getElementById('aiMode').value;
             if(!msg) return;
 
             chatBox.innerHTML += `<div class='user'><b>You:</b> ${msg}</div>`;
@@ -176,50 +157,16 @@ HTML_PAGE = """
             chatBox.scrollTop = chatBox.scrollHeight;
 
             try {
-                // Pehle password check karein
-                let authRes = await fetch('/check_pass', {
+                let res = await fetch('/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({password: getPass()})
+                    body: JSON.stringify({password: getPass(), message: msg})
                 });
-                let authData = await authRes.json();
-                if (!authData.ok) {
-                    chatBox.innerHTML += `<div class='ai'><b>AI:</b> ❌ Galat Password! Upar sahi Server Password dalein.</div>`;
-                    btn.innerText = "🚀 Send Message";
-                    return;
-                }
-
-                let replyText = "";
-                if (mode === "free") {
-                    // Direct Browser se Superfast AI (Kabhi busy ya timeout nahi hoga)
-                    replyText = await callDirectFreeAI(msg);
-                } else {
-                    // Server Gemini Mode
-                    let res = await fetch('/chat', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({password: getPass(), message: msg})
-                    });
-                    let data = await res.json();
-                    if (data.error_fallback) {
-                        // Agar Gemini busy (503) hai toh turant Direct Free AI se jawab laao
-                        replyText = await callDirectFreeAI(msg);
-                    } else {
-                        replyText = data.reply;
-                    }
-                }
-
-                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${replyText}</div>`;
-                speakText(replyText);
+                let data = await res.json();
+                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${data.reply}</div>`;
+                speakText(data.reply);
             } catch (err) {
-                // Agar server so raha ho tab bhi Direct AI kaam karega
-                try {
-                    let backupReply = await callDirectFreeAI(msg);
-                    chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${backupReply}</div>`;
-                    speakText(backupReply);
-                } catch (e2) {
-                    chatBox.innerHTML += `<div class='ai'><b>AI:</b> ⚠️ Internet slow hai, dubara Send dabayein.</div>`;
-                }
+                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ⚠️ Connection slow hai, dubara Send dabayein.</div>`;
             }
             btn.innerText = "🚀 Send Message";
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -300,11 +247,11 @@ HTML_PAGE = """
             loadNotes();
         }
 
-        async function downloadVideo() {
+        async function downloadUrl() {
             let url = document.getElementById('videoUrl').value.trim();
             if(!url) return alert("Link daalein!");
             let status = document.getElementById('downloadStatus');
-            status.innerHTML = "⏳ Video download ho rahi hai...";
+            status.innerHTML = "⏳ Server par save ho raha hai...";
             let res = await fetch('/download_v', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -375,27 +322,37 @@ def check_auth(pw):
 def home():
     return render_template_string(HTML_PAGE)
 
-@app.route("/check_pass", methods=["POST"])
-def check_pass():
-    data = request.json or {}
-    return jsonify({"ok": check_auth(data.get("password", ""))})
-
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json or {}
     if not check_auth(data.get("password", "")):
-        return jsonify({"reply": "❌ Galat Password!"})
+        return jsonify({"reply": "❌ Galat Password! Upar sahi Server Password dalein."})
     
-    prompt = f"Tum Sachin ke smart personal server assistant ho. Hinglish mein chota aur clear jawab do: {data.get('message', '')}"
+    msg = data.get("message", "")
+    prompt = f"Tum Sachin ke smart personal server assistant ho. Hinglish mein chota aur clear jawab do: {msg}"
 
-    if client:
-        try:
-            res = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-            return jsonify({"reply": res.text})
-        except Exception:
-            return jsonify({"error_fallback": True})
+    # 1. Direct REST call to Gemini 3.8 Flash (Bina kisi external library ke)
+    if API_KEY:
+        for model in ["gemini-3.8-flash", "gemini-2.5-flash"]:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+                payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+                req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    res_data = json.loads(r.read().decode("utf-8"))
+                    ans = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                    return jsonify({"reply": ans})
+            except Exception:
+                continue
 
-    return jsonify({"error_fallback": True})
+    # 2. Backup Free AI (Bina API Key ke)
+    try:
+        url = "https://text.pollinations.ai/" + urllib.parse.quote(prompt)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return jsonify({"reply": r.read().decode("utf-8")})
+    except Exception as e:
+        return jsonify({"reply": f"⚠️ AI abhi busy hai, 5 second baad Send dabayein."})
 
 @app.route("/files")
 def list_files():
@@ -415,4 +372,51 @@ def upload_file():
 @app.route("/download/<filename>")
 def download_file(filename):
     if not check_auth(request.args.get("password", "")):
-        return "Unautho
+        return "Unauthorized", 403
+    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+
+@app.route("/delete_file", methods=["POST"])
+def delete_file():
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
+        return jsonify({"error": "Unauthorized"}), 403
+    path = os.path.join(UPLOAD_FOLDER, secure_filename(data.get("filename", "")))
+    if os.path.exists(path):
+        os.remove(path)
+    return jsonify({"status": "ok"})
+
+@app.route("/notes", methods=["GET", "POST"])
+def handle_notes():
+    if request.method == "GET":
+        if not check_auth(request.args.get("password", "")):
+            return jsonify({"error": "❌ Password dalein!"})
+        with open(NOTES_FILE, "r") as f:
+            return jsonify({"notes": json.load(f)})
+    else:
+        data = request.json or {}
+        if not check_auth(data.get("password", "")):
+            return jsonify({"error": "Unauthorized"}), 403
+        with open(NOTES_FILE, "r") as f:
+            notes = json.load(f)
+        notes.append(data.get("note"))
+        with open(NOTES_FILE, "w") as f:
+            json.dump(notes, f)
+        return jsonify({"status": "ok"})
+
+@app.route("/delete_note", methods=["POST"])
+def delete_note():
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
+        return jsonify({"error": "Unauthorized"}), 403
+    with open(NOTES_FILE, "r") as f:
+        notes = json.load(f)
+    idx = data.get("index", -1)
+    if 0 <= idx < len(notes):
+        notes.pop(idx)
+    with open(NOTES_FILE, "w") as f:
+        json.dump(notes, f)
+    return jsonify({"status": "ok"})
+
+@app.route("/download_v", methods=["POST"])
+def download_video():
+    data = request.json or
