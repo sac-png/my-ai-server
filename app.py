@@ -1,6 +1,7 @@
 import os
-import time
 import json
+import urllib.request
+import urllib.parse
 import subprocess
 from flask import Flask, render_template_string, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -8,8 +9,8 @@ from google import genai
 
 app = Flask(__name__)
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "12345")
+API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "12345").strip()
 
 UPLOAD_FOLDER = "my_files"
 WEB_HOST_FOLDER = "hosted_web"
@@ -29,7 +30,7 @@ HTML_PAGE = """
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sachin's Ultimate Server Hub</title>
+    <title>Sachin's Superfast Server Hub</title>
     <style>
         body { font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 12px; }
         .box { max-width: 550px; margin: auto; background: #1e293b; padding: 18px; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
@@ -44,12 +45,11 @@ HTML_PAGE = """
         button.action { background: #0284c7; color: white; font-weight: bold; cursor: pointer; }
         button.mic { background: #e11d48; color: white; font-weight: bold; }
         button.del { background: #dc2626; width: auto; padding: 5px 10px; font-size: 12px; margin: 0; color: white; border-radius: 4px; cursor: pointer; }
-        #chatBox, .list-box, #termOut { height: 250px; overflow-y: auto; background: #0f172a; padding: 12px; border-radius: 8px; margin-top: 10px; border: 1px solid #334155; font-size: 13px; }
+        #chatBox, .list-box { height: 260px; overflow-y: auto; background: #0f172a; padding: 12px; border-radius: 8px; margin-top: 10px; border: 1px solid #334155; font-size: 14px; }
         .user { color: #38bdf8; margin: 8px 0; text-align: right; }
         .ai { color: #4ade80; margin: 8px 0; text-align: left; }
         .item { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 8px 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #334155; word-break: break-all; }
         a { color: #38bdf8; text-decoration: none; }
-        pre { margin: 0; white-space: pre-wrap; color: #22c55e; font-family: monospace; }
         #calcScreen { font-size: 20px; font-weight: bold; text-align: right; background: #0f172a; border-radius: 8px; padding: 12px; border: 1px solid #334155; margin-bottom: 8px; min-height: 50px; color: #4ade80; }
         .calc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
         .calc-btn { padding: 15px; font-size: 16px; background: #334155; border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; margin-top: 0; }
@@ -59,23 +59,23 @@ HTML_PAGE = """
 </head>
 <body>
     <div class="box">
-        <h2>⚡ Sachin's Server Hub</h2>
+        <h2>⚡ Sachin's Superfast Hub</h2>
         <input type="password" id="pass" placeholder="🔑 Apna Server Password dalein">
 
         <div class="tabs">
-            <button class="tab-btn active" onclick="openTab('aiTab', this)">🤖 AI Assistant</button>
+            <button class="tab-btn active" onclick="openTab('aiTab', this)">🤖 Fast AI</button>
             <button class="tab-btn" onclick="openTab('fileTab', this); loadFiles();">📁 Files</button>
             <button class="tab-btn" onclick="openTab('noteTab', this); loadNotes();">📝 Notes</button>
             <button class="tab-btn" onclick="openTab('dlTab', this)">📥 Downloader</button>
-            <button class="tab-btn" onclick="openTab('hostTab', this); loadHostedPages();">🌐 Web Hosting</button>
+            <button class="tab-btn" onclick="openTab('hostTab', this); loadHostedPages();">🌐 Web Host</button>
             <button class="tab-btn" onclick="openTab('calcTab', this)">🧮 Calculator</button>
         </div>
 
         <!-- 1. AI Assistant Tab -->
         <div id="aiTab" class="section active">
-            <div id="chatBox"><div class="ai"><b>Server AI:</b> Namaste! Main aapka all-in-one assistant hoon. Bataiye kya kaam karna hai?</div></div>
-            <textarea id="msg" rows="2" placeholder="Sawal puchein, code likhwayein ya Mic dabayein..."></textarea>
-            <button class="action" onclick="sendMsg()">🚀 Send</button>
+            <div id="chatBox"><div class="ai"><b>AI:</b> Superfast AI Ready! (Bina API Key ke bhi chalega). Password daal kar puchein!</div></div>
+            <textarea id="msg" rows="2" placeholder="Yahan likhein ya Mic dabayein..."></textarea>
+            <button class="action" id="sendBtn" onclick="sendMsg()">🚀 Send Message</button>
             <button class="mic" onclick="startVoice()">🎤 Bolkar Puchein (Voice)</button>
         </div>
 
@@ -83,29 +83,29 @@ HTML_PAGE = """
         <div id="fileTab" class="section">
             <input type="file" id="fileInput">
             <button class="action" onclick="uploadFile()">⬆️ Server Par File Upload Karein</button>
-            <div class="list-box" id="fileList">Password daal kar refresh karein...</div>
+            <div class="list-box" id="fileList">Password daal kar dekhein...</div>
         </div>
 
         <!-- 3. Notes Tab -->
         <div id="noteTab" class="section">
-            <textarea id="noteInput" rows="2" placeholder="Koi bhi zaroori Note, Link ya Code yahan save karein..."></textarea>
+            <textarea id="noteInput" rows="2" placeholder="Note ya Link save karein..."></textarea>
             <button class="action" onclick="saveNote()">💾 Save Note</button>
             <div class="list-box" id="noteList">Password daal kar dekhein...</div>
         </div>
 
         <!-- 4. Downloader Tab -->
         <div id="dlTab" class="section">
-            <input type="text" id="videoUrl" placeholder="Video Link paste karein (YouTube, etc.)">
+            <input type="text" id="videoUrl" placeholder="Video Link paste karein">
             <button class="action" onclick="downloadVideo()">📥 Video Server Pe Save Karein</button>
-            <div class="list-box" id="downloadStatus" style="height: 100px;">Koi Task nahi chal raha hai. (Video 'Files' tab mein jayengi)</div>
+            <div class="list-box" id="downloadStatus" style="height: 100px;">Ready...</div>
         </div>
 
         <!-- 5. Mini Web Hosting Tab -->
         <div id="hostTab" class="section">
-            <input type="text" id="webFilename" placeholder="Page Name (jaise, index.html ya about.html)">
-            <textarea id="webCode" rows="4" placeholder="Apna HTML, CSS code yahan paste karein..."></textarea>
+            <input type="text" id="webFilename" placeholder="Page Name (e.g. index.html)">
+            <textarea id="webCode" rows="4" placeholder="HTML code paste karein..."></textarea>
             <button class="action" onclick="saveWebPage()">🌐 Page Live Karein</button>
-            <div class="list-box" id="hostedList">Check back for live pages...</div>
+            <div class="list-box" id="hostedList">Ready...</div>
         </div>
 
         <!-- 6. Calculator Tab -->
@@ -136,7 +136,7 @@ HTML_PAGE = """
     </div>
 
     <script>
-        function getPass() { return document.getElementById('pass').value; }
+        function getPass() { return document.getElementById('pass').value.trim(); }
 
         function openTab(tabId, btn) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -145,30 +145,37 @@ HTML_PAGE = """
             btn.classList.add('active');
         }
 
-        // AI Chat
         async function sendMsg() {
             let msgInput = document.getElementById('msg');
             let msg = msgInput.value.trim();
             let chatBox = document.getElementById('chatBox');
+            let btn = document.getElementById('sendBtn');
             if(!msg) return;
+
             chatBox.innerHTML += `<div class='user'><b>You:</b> ${msg}</div>`;
             msgInput.value = '';
+            btn.innerText = "⏳ Soch raha hai...";
             chatBox.scrollTop = chatBox.scrollHeight;
 
-            let res = await fetch('/chat', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({password: getPass(), message: msg})
-            });
-            let data = await res.json();
-            chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${data.reply}</div>`;
-            chatBox.scrollTop = chatBox.scrollHeight;
-
-            if ('speechSynthesis' in window) {
-                let s = new SpeechSynthesisUtterance(data.reply);
-                s.lang = 'hi-IN';
-                window.speechSynthesis.speak(s);
+            try {
+                let res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({password: getPass(), message: msg})
+                });
+                let data = await res.json();
+                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ${data.reply}</div>`;
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    let s = new SpeechSynthesisUtterance(data.reply);
+                    s.lang = 'hi-IN';
+                    window.speechSynthesis.speak(s);
+                }
+            } catch (err) {
+                chatBox.innerHTML += `<div class='ai'><b>AI:</b> ⚠️ Network error, dubara Send dabayein.</div>`;
             }
+            btn.innerText = "🚀 Send Message";
+            chatBox.scrollTop = chatBox.scrollHeight;
         }
 
         function startVoice() {
@@ -180,7 +187,6 @@ HTML_PAGE = """
             rec.start();
         }
 
-        // Files
         async function loadFiles() {
             let res = await fetch('/files?password=' + encodeURIComponent(getPass()));
             let data = await res.json();
@@ -215,7 +221,6 @@ HTML_PAGE = """
             loadFiles();
         }
 
-        // Notes
         async function loadNotes() {
             let res = await fetch('/notes?password=' + encodeURIComponent(getPass()));
             let data = await res.json();
@@ -248,13 +253,11 @@ HTML_PAGE = """
             loadNotes();
         }
 
-        // Downloader
         async function downloadVideo() {
             let url = document.getElementById('videoUrl').value.trim();
             if(!url) return alert("Link daalein!");
             let status = document.getElementById('downloadStatus');
-            status.innerHTML = "⏳ Video download ho rahi hai... server refresh kar ke Files check karein.";
-            
+            status.innerHTML = "⏳ Video download ho rahi hai...";
             let res = await fetch('/download_v', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -265,7 +268,6 @@ HTML_PAGE = """
             document.getElementById('videoUrl').value = '';
         }
 
-        // Hosted Webpages
         async function loadHostedPages() {
             let res = await fetch('/hosted_list?password=' + encodeURIComponent(getPass()));
             let data = await res.json();
@@ -275,7 +277,7 @@ HTML_PAGE = """
             data.pages.forEach(p => {
                 let liveUrl = window.location.origin + '/web/' + p + '?password=' + encodeURIComponent(getPass());
                 box.innerHTML += `<div class="item">
-                    <a href="${liveUrl}" target="_blank">🌐 view: ${p}</a>
+                    <a href="${liveUrl}" target="_blank">🌐 View: ${p}</a>
                     <button class="del" onclick="delPage('${p}')">Delete</button>
                 </div>`;
             });
@@ -304,7 +306,6 @@ HTML_PAGE = """
             loadHostedPages();
         }
 
-        // Calculator
         let calcVal = "";
         function pressCalc(v) { calcVal += v; document.getElementById('calcScreen').innerText = calcVal; }
         function clearCalc() { calcVal = ""; document.getElementById('calcScreen').innerText = "0"; }
@@ -321,7 +322,7 @@ HTML_PAGE = """
 """
 
 def check_auth(pw):
-    return pw == ADMIN_PASS
+    return str(pw).strip() == ADMIN_PASS
 
 @app.route("/")
 def home():
@@ -329,30 +330,47 @@ def home():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.json
-    if not check_auth(data.get("password")):
-        return jsonify({"reply": "❌ Galat Password!"})
-    if not client:
-        return jsonify({"reply": "⚠️ API Key set nahi hai!"})
-    prompt = f"Tum Sachin ke personal server assistant ho. Hinglish mein chota aur smart jawab do: {data.get('message')}"
-    models = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
-    for m in models:
-        try:
-            res = client.models.generate_content(model=m, contents=prompt)
-            return jsonify({"reply": res.text})
-        except:
-            continue
-    return jsonify({"reply": "⏳ API temporary busy hai, please thoda baad try karein."})
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
+        return jsonify({"reply": "❌ Galat Password! Upar sahi Server Password dalein."})
+    
+    user_msg = data.get("message", "")
+    prompt = f"Tum Sachin ke personal server assistant ho. Hinglish mein chota aur smart jawab do: {user_msg}"
+
+    # 1. Pehle Bina API Key wala Superfast Free AI try karega (100% Working & Fast)
+    try:
+        encoded = urllib.parse.quote(prompt)
+        req = urllib.request.Request(
+            f"https://text.pollinations.ai/{encoded}",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as response:
+            reply_text = response.read().decode("utf-8").strip()
+            if reply_text:
+                return jsonify({"reply": reply_text})
+    except Exception:
+        pass
+
+    # 2. Backup: Agar Gemini API Key hai toh latest Gemini 3.8 model chalayega
+    if client:
+        for m in ["gemini-3.8-flash", "gemini-2.5-flash"]:
+            try:
+                res = client.models.generate_content(model=m, contents=prompt)
+                return jsonify({"reply": res.text})
+            except Exception as e:
+                continue
+
+    return jsonify({"reply": "⚠️ Server busy hai, ek baar phir Send dabayein."})
 
 @app.route("/files")
 def list_files():
-    if not check_auth(request.args.get("password")):
-        return jsonify({"error": "❌ Password dalein!"})
+    if not check_auth(request.args.get("password", "")):
+        return jsonify({"error": "❌ Upar sahi Password dalein!"})
     return jsonify({"files": os.listdir(UPLOAD_FOLDER)})
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    if not check_auth(request.form.get("password")):
+    if not check_auth(request.form.get("password", "")):
         return jsonify({"error": "Unauthorized"}), 403
     f = request.files.get("file")
     if f:
@@ -361,14 +379,14 @@ def upload_file():
 
 @app.route("/download/<filename>")
 def download_file(filename):
-    if not check_auth(request.args.get("password")):
+    if not check_auth(request.args.get("password", "")):
         return "Unauthorized", 403
     return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 @app.route("/delete_file", methods=["POST"])
 def delete_file():
-    data = request.json
-    if not check_auth(data.get("password")):
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
         return jsonify({"error": "Unauthorized"}), 403
     path = os.path.join(UPLOAD_FOLDER, secure_filename(data.get("filename", "")))
     if os.path.exists(path):
@@ -378,13 +396,13 @@ def delete_file():
 @app.route("/notes", methods=["GET", "POST"])
 def handle_notes():
     if request.method == "GET":
-        if not check_auth(request.args.get("password")):
+        if not check_auth(request.args.get("password", "")):
             return jsonify({"error": "❌ Password dalein!"})
         with open(NOTES_FILE, "r") as f:
             return jsonify({"notes": json.load(f)})
     else:
-        data = request.json
-        if not check_auth(data.get("password")):
+        data = request.json or {}
+        if not check_auth(data.get("password", "")):
             return jsonify({"error": "Unauthorized"}), 403
         with open(NOTES_FILE, "r") as f:
             notes = json.load(f)
@@ -395,8 +413,8 @@ def handle_notes():
 
 @app.route("/delete_note", methods=["POST"])
 def delete_note():
-    data = request.json
-    if not check_auth(data.get("password")):
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
         return jsonify({"error": "Unauthorized"}), 403
     with open(NOTES_FILE, "r") as f:
         notes = json.load(f)
@@ -409,21 +427,52 @@ def delete_note():
 
 @app.route("/download_v", methods=["POST"])
 def download_video():
-    data = request.json
-    if not check_auth(data.get("password")):
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
         return jsonify({"error": "Unauthorized"}), 403
     url = data.get("url")
     try:
         cmd = f"yt-dlp -P {UPLOAD_FOLDER} -o '%(title)s.%(ext)s' --max-filesize 50M '{url}'"
         subprocess.Popen(cmd, shell=True)
-        return jsonify({"status": "📥 background download chalu! thodi der baad files refresh karein."})
+        return jsonify({"status": "📥 Download chalu ho gaya! Thodi der mein Files tab check karein."})
     except Exception as e:
-        return jsonify({"error": f"Task error: {str(e)}"})
+        return jsonify({"error": f"Error: {str(e)}"})
 
 @app.route("/hosted_list")
 def hosted_list():
-    if not check_auth(request.args.get("password")):
+    if not check_auth(request.args.get("password", "")):
         return jsonify({"error": "❌ Password dalein!"})
     return jsonify({"pages": [f for f in os.listdir(WEB_HOST_FOLDER) if f.endswith('.html')]})
 
-@app
+@app.route("/save_web", methods=["POST"])
+def save_web():
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
+        return jsonify({"error": "Unauthorized"}), 403
+    filename = secure_filename(data.get("filename", ""))
+    if not filename.endswith('.html'):
+        filename += '.html'
+    code = data.get("code", "")
+    with open(os.path.join(WEB_HOST_FOLDER, filename), "w") as f:
+        f.write(code)
+    return jsonify({"status": "ok"})
+
+@app.route("/web/<filename>")
+def view_hosted_page(filename):
+    if not check_auth(request.args.get("password", "")):
+        return "Unauthorized", 403
+    return send_from_directory(WEB_HOST_FOLDER, filename)
+
+@app.route("/delete_page", methods=["POST"])
+def delete_page():
+    data = request.json or {}
+    if not check_auth(data.get("password", "")):
+        return jsonify({"error": "Unauthorized"}), 403
+    path = os.path.join(WEB_HOST_FOLDER, secure_filename(data.get("filename", "")))
+    if os.path.exists(path):
+        os.remove(path)
+    return jsonify({"status": "ok"})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
